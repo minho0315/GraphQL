@@ -1,5 +1,9 @@
-const { ApolloServer } = require('apollo-server')
+const { ApolloServer } = require('apollo-server-express')
+const express = require('express')
+const expressPlayground = require('graphql-playground-middleware-express').default
 const {GraphQLScalarType} = require('graphql')
+const {MongoClient} = require('mongodb')
+require('dotenv').config()
 
 // 스키마 정의
 const typeDefs = `
@@ -40,10 +44,18 @@ input PostPhotoInput {
 type Query {
     totalPhotos: Int!
     allPhotos(after: DateTime): [Photo!]!
+    totalUsers: Int!
+    allUsers: [User!]!
+}
+
+type AuthPayload {
+    token: String!
+    user: User!
 }
 
 type Mutation {
     postPhoto(input: PostPhotoInput!): Photo!
+    githubAuth(code: String!): AuthPayload!
 }
 `
 
@@ -100,8 +112,23 @@ var _id = 0
 // 리졸버
 const resolvers = {
     Query: {
-        totalPhotos: () => photos.length,
-        allPhotos: () => photos
+        totalPhotos: (parent, args, {db}) => 
+        db.collection('photos')
+        .estimatedDocumentCount(),
+
+        allPhotos: (parent, args, {db}) => 
+        db.collection('photos')
+        .find()
+        .toArray(),
+
+        totalUsers: (parent, args, {db}) =>
+        db.collection('users')
+        .estimatedDocumentCount(),
+
+        allUsers: (parent, args, {db}) =>
+        db.collection('users')
+        .find()
+        .toArray()
     },
 
     Mutation: {
@@ -145,12 +172,28 @@ const resolvers = {
     })
 }
 
-// 서버
-const server = new ApolloServer({
-    typeDefs,
-    resolvers
-})
 
-server
-    .listen()
-    .then(({ url }) => console.log(`GraphQL Service running on ${url}`))
+// 서버
+
+async function start() {
+    const app = express()
+    const MONGO_DB = process.env.DB_HOST
+
+    const client = await MongoClient.connect(
+        MONGO_DB,
+        {useNewUrlParser: true}
+    )
+    const db = client.db()
+    const context = {db}
+    const server = new ApolloServer({typeDefs, resolvers, context})
+    await server.start();
+    server.applyMiddleware({app})
+    app.get('/', (req, res) => res.end('PhotoShare API에 오신 것을 환영합니다'))
+    app.get('/playground', expressPlayground({ endpoint: '/graphql' }))
+    app.listen({ port: 4000 }, () =>
+        console.log(`GraphQL Server running at http://localhost:4000${server.graphqlPath}`
+        )
+    )
+}
+
+start()
