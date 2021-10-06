@@ -3,6 +3,7 @@ const express = require('express')
 const expressPlayground = require('graphql-playground-middleware-express').default
 const {GraphQLScalarType} = require('graphql')
 const {MongoClient} = require('mongodb')
+const fetch = require('cross-fetch')
 require('dotenv').config()
 
 // 스키마 정의
@@ -140,6 +141,38 @@ const resolvers = {
             }
             photos.push(newPhoto)
             return newPhoto
+        },
+
+        async githubAuth(parent, { code }, { db }) {
+
+            let {
+              message,
+              access_token,
+              avatar_url,
+              login,
+              name
+            } = await authorizeWithGithub({
+              client_id: '',
+              client_secret: '',
+              code
+            });
+        
+            if (message) {
+              throw new Error(message)
+            }
+        
+            let latestUserInfo = {
+              name,
+              githubLogin: login,
+              githubToken: access_token,
+              avatar: avatar_url
+            };
+        
+            const { ops:[user] } = await db
+              .collection('users')
+              .replaceOne({ githubLogin: login }, latestUserInfo, { upsert: true });
+        
+            return { user, token: access_token };
         }
     },
 
@@ -170,6 +203,35 @@ const resolvers = {
         serialize: value => new Date(value).toISOString(),
         parseLiteral: ast => ast.value
     })
+}
+
+const requestGithubToken = credentials => {
+    fetch(
+        "https://github.com/login/oauth/access_token",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json"
+            },
+            body: JSON.stringify(credentials)
+        }
+    ).then(res => res.json())
+    .catch(error => {
+        throw new Error(JSON.stringify(error));
+    })
+}
+
+const requestGithubUserAccount = token => {
+    fetch(`https://api.github.com/user?access_token=${token}`)
+        .then(toJSON)
+        .catch(throwError);
+}
+
+const authorizeWithGithub = async credentials => {
+    const {access_token} = await requestGithubToken(credentials)
+    const githubUser = await requestGithubUserAccount(access_token)
+    return { ...githubUser, access_token }
 }
 
 
